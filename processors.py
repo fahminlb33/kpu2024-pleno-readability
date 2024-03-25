@@ -1,4 +1,4 @@
-from hashlib import sha256
+from hashlib import sha3_256 as sha256
 
 import cv2
 import requests
