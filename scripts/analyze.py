@@ -161,55 +161,65 @@ def init_worker(template_arr):
     global_template_arr = template_arr
 
 
-@on_error_return_none
 def process_single(s: str) -> list[str]:
     if s is None or len(s.strip()) == 0:
         return None
 
-    # parse line
-    row = json.loads(s)
+    try:
+        # parse line
+        row = json.loads(s)
 
-    # get global template
-    global global_template_arr
-    current_template = global_template_arr[row["page"] - 1, :, :]
+        # get global template
+        global global_template_arr
+        current_template = global_template_arr[row["page"] - 1, :, :]
 
-    # download image
-    response = requests.get(row["url"])
-    img = load_image(response)
+        # download image
+        response = requests.get(row["url"])
+        img = load_image(response)
 
-    (h, w) = img.shape
-    img_ext = row["url"].split(".")[-1]
-    img_size = len(response.content)
-    img_hash = sha3_256(response.content).hexdigest()
+        (h, w) = img.shape
+        img_ext = row["url"].split(".")[-1]
+        img_size = len(response.content)
+        img_hash = sha3_256(response.content).hexdigest()
 
-    # get similarity measures
-    sift_total, sift_good = sift_keypoints(img, current_template)
-    sim_mse, sim_ssim = similarity_scores(img, current_template)
+        # get similarity measures
+        sift_total, sift_good = sift_keypoints(img, current_template)
+        sim_mse, sim_ssim = similarity_scores(img, current_template)
 
-    # aruco detection
-    aruco_likely_detected, aruco_ids = detect_aruco(img)
-
-    return {
-        **row,
-        # file meta
-        "hash": img_hash,
-        "extension": img_ext,
-        "size_bytes": img_size,
-        # image data
-        "width": w,
-        "height": h,
-        # blur measures
-        "fft_blur_score": fft_blur_score(img),
-        "laplacian_blur_score": laplacian_blur_score(img),
-        # similarity measures
-        "mse_score": sim_mse,
-        "ssim_score": sim_ssim,
-        "sift_keypoints_good": sift_good,
-        "sift_keypoints_total": sift_total,
         # aruco detection
-        "aruco_ids": aruco_ids,
-        "aruco_likely_detected": aruco_likely_detected,
-    }
+        aruco_likely_detected, aruco_ids = detect_aruco(img)
+
+        return {
+            "success": True,
+            # original data
+            **row,
+            # file meta
+            "hash": img_hash,
+            "extension": img_ext,
+            "size_bytes": img_size,
+            # image data
+            "width": w,
+            "height": h,
+            # blur measures
+            "fft_blur_score": fft_blur_score(img),
+            "laplacian_blur_score": laplacian_blur_score(img),
+            # similarity measures
+            "mse_score": sim_mse,
+            "ssim_score": sim_ssim,
+            "sift_keypoints_good": sift_good,
+            "sift_keypoints_total": sift_total,
+            # aruco detection
+            "aruco_ids": aruco_ids,
+            "aruco_likely_detected": aruco_likely_detected,
+        }
+    except Exception as ex:
+            return {
+                "success": False,
+                # original data
+                **row,
+                # error details
+                "error": repr(ex),
+            }
 
 
 # --------------------------------------------------------------------
