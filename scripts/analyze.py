@@ -33,8 +33,7 @@ def on_error_return_none(f):
 
 def load_image(response) -> tuple[np.ndarray, int]:
     img = np.asarray(bytearray(response.content), dtype="uint8")
-    img = cv2.imdecode(img, cv2.IMREAD_COLOR)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img = cv2.imdecode(img, cv2.IMREAD_GRAYSCALE)
 
     return img
 
@@ -118,14 +117,36 @@ def similarity_scores(image: np.ndarray, template: np.ndarray) -> float:
 
 @on_error_return_none
 def detect_aruco(image: np.ndarray) -> bool:
+    # crop image
+    img_crop = image[: int(image.shape[0] / 4), int(image.shape[1] / 1.5) :].copy()
+
+    # detect aruco
     arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h10)
     arucoParams = cv2.aruco.DetectorParameters()
     detector = cv2.aruco.ArucoDetector(dictionary=arucoDict, detectorParams=arucoParams)
-    (corners, ids, _) = detector.detectMarkers(image)
+    (corners, ids, _) = detector.detectMarkers(img_crop)
 
     if len(corners) > 0:
         return True, ids.ravel().tolist()
 
+    # detect squares
+    img_blur = cv2.GaussianBlur(img_crop, (5, 5), 1)
+    img_edges = cv2.Canny(img_blur, 10, 50)
+    contours = cv2.findContours(img_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[0]
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        approx = cv2.approxPolyDP(contour, 10, True)
+        x, y, w, h = cv2.boundingRect(contour)
+
+        if len(approx) < 4 or area < 900:
+            continue
+
+        aspect_ratio = w / h
+        if aspect_ratio > 0.8 and aspect_ratio < 1.2:
+            return True, None
+
+    # aruco not detected, square contour not detected
     return False, None
 
 
@@ -165,29 +186,28 @@ def process_single(s: str) -> list[str]:
     sim_mse, sim_ssim = similarity_scores(img, current_template)
 
     # aruco detection
-    aruco_detected, aruco_ids = detect_aruco(img)
+    aruco_likely_detected, aruco_ids = detect_aruco(img)
 
     return {
-        "id": row["id"],
-        "page": row["page"],
+        **row,
         # file meta
         "hash": img_hash,
         "extension": img_ext,
         "size_bytes": img_size,
         # image data
-        "height": h,
         "width": w,
+        "height": h,
         # blur measures
-        "laplacian_blur_score": laplacian_blur_score(img),
         "fft_blur_score": fft_blur_score(img),
+        "laplacian_blur_score": laplacian_blur_score(img),
         # similarity measures
-        "sift_keypoints_total": sift_total,
-        "sift_keypoints_good": sift_good,
         "mse_score": sim_mse,
         "ssim_score": sim_ssim,
+        "sift_keypoints_good": sift_good,
+        "sift_keypoints_total": sift_total,
         # aruco detection
-        "aruco_detected": aruco_detected,
         "aruco_ids": aruco_ids,
+        "aruco_likely_detected": aruco_likely_detected,
     }
 
 
@@ -200,7 +220,7 @@ def main(args):
     # open input and output file
     with (
         open(args.input_file, "r") as infile,
-        open(args.output_file, "w") as outfile,
+        open(args.output_file, "a+") as outfile,
     ):
         # load template file
         template = np.load(args.template_file)
