@@ -17,7 +17,7 @@ dependencies = [
     "matplotlib>=3.10.0",
     # image processing
     "scikit-image>=0.25.1",
-    "opencv-python>=4.11.0.86",
+    "opencv-contrib-python-headless>=4.11.0.86",
     # utils
     "ruff>=0.9.4",
     "tqdm>=4.67.1",
