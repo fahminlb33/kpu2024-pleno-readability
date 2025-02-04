@@ -237,6 +237,9 @@ def main(args):
 
             # save results
             for result in (pbar := tqdm(jobs, total=args.total)):
+                if result is None:
+                    continue
+                
                 json.dump(result, outfile)
                 outfile.write("\n")
 
