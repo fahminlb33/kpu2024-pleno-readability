@@ -119,6 +119,7 @@ def similarity_scores(image: np.ndarray, template: np.ndarray) -> float:
 def detect_aruco(image: np.ndarray) -> bool:
     # crop image
     img_crop = image[: int(image.shape[0] / 4), int(image.shape[1] / 1.5) :].copy()
+    center_x = img_crop.shape[1] / 3
 
     # detect aruco
     arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h10)
@@ -135,11 +136,11 @@ def detect_aruco(image: np.ndarray) -> bool:
     contours = cv2.findContours(img_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)[0]
 
     for contour in contours:
-        area = cv2.contourArea(contour)
-        approx = cv2.approxPolyDP(contour, 10, True)
         x, y, w, h = cv2.boundingRect(contour)
+        approx = cv2.approxPolyDP(contour, 10, True)
+        area = w * h #cv2.contourArea(contour)
 
-        if len(approx) < 4 or area < 900:
+        if len(approx) < 4 or area < 900 or x < center_x:
             continue
 
         aspect_ratio = w / h
