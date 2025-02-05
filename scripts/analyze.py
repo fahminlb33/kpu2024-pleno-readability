@@ -1,3 +1,4 @@
+import os
 import json
 import argparse
 import functools
@@ -83,12 +84,9 @@ def fft_blur_score(image: np.ndarray, size=60, width=500) -> tuple[float, float]
 
 
 @on_error_return_none
-def sift_keypoints(image: np.ndarray, template: np.ndarray) -> float:
+def sift_keypoints(sift, image: np.ndarray, template: np.ndarray, lowe_ratio = 0.75) -> float: 
     # SIFT + Lowe ratio
     # https://stackoverflow.com/a/50161781/5561144
-    lowe_ratio = 0.75
-    sift = cv2.SIFT_create()
-
     _, des1 = sift.detectAndCompute(template, None)
     _, des2 = sift.detectAndCompute(image, None)
 
@@ -116,16 +114,13 @@ def similarity_scores(image: np.ndarray, template: np.ndarray) -> float:
 
 
 @on_error_return_none
-def detect_aruco(image: np.ndarray) -> bool:
+def detect_aruco(arucoDetector: cv2.aruco.ArucoDetector, image: np.ndarray) -> bool:
     # crop image
     img_crop = image[: int(image.shape[0] / 4), int(image.shape[1] / 1.5) :].copy()
     center_x = img_crop.shape[1] / 3
 
     # detect aruco
-    arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h10)
-    arucoParams = cv2.aruco.DetectorParameters()
-    detector = cv2.aruco.ArucoDetector(dictionary=arucoDict, detectorParams=arucoParams)
-    (corners, ids, _) = detector.detectMarkers(img_crop)
+    (corners, ids, _) = arucoDetector.detectMarkers(img_crop)
 
     if len(corners) > 0:
         return True, ids.ravel().tolist()
@@ -155,23 +150,42 @@ def detect_aruco(image: np.ndarray) -> bool:
 #  PROCESSING
 # --------------------------------------------------------------------
 
+def init_worker(template_file_path):
+    global g_template_file_path
+    g_template_file_path = template_file_path
 
-def init_worker(template_arr):
-    global global_template_arr
-    global_template_arr = template_arr
+
+@functools.lru_cache()
+def get_worker_data():
+    # load template file
+    global g_template_file_path
+    template: np.ndarray = np.load(g_template_file_path)
+
+    # SIFT detector
+    sift = cv2.SIFT_create()
+
+    # ARUCO detector
+    arucoParams = cv2.aruco.DetectorParameters()
+    arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h10)
+    detector = cv2.aruco.ArucoDetector(dictionary=arucoDict, detectorParams=arucoParams)
+
+    print(f"INIT PID:{os.getpid()} PPID:{os.getppid()}")
+
+    return template, sift, detector
 
 
 def process_single(s: str) -> list[str]:
     if s is None or len(s.strip()) == 0:
         return None
+    
+    template, sift, detector = get_worker_data()
 
     try:
         # parse line
         row = json.loads(s)
 
         # get global template
-        global global_template_arr
-        current_template = global_template_arr[row["page"] - 1, :, :]
+        current_template = template[row["page"] - 1, :, :]
 
         # download image
         response = requests.get(row["url"])
@@ -183,11 +197,11 @@ def process_single(s: str) -> list[str]:
         img_hash = sha3_256(response.content).hexdigest()
 
         # get similarity measures
-        sift_total, sift_good = sift_keypoints(img, current_template)
+        sift_total, sift_good = sift_keypoints(sift, img, current_template)
         sim_mse, sim_ssim = similarity_scores(img, current_template)
 
         # aruco detection
-        aruco_likely_detected, aruco_ids = detect_aruco(img)
+        aruco_likely_detected, aruco_ids = detect_aruco(detector, img)
 
         return {
             "success": True,
@@ -233,12 +247,9 @@ def main(args):
         open(args.input_file, "r") as infile,
         open(args.output_file, "a+") as outfile,
     ):
-        # load template file
-        template = np.load(args.template_file)
-
         # create worker pool
         with Pool(
-            processes=args.jobs, initializer=init_worker, initargs=(template,)
+            processes=args.jobs, initializer=(init_worker), initargs=(args.template_file,)
         ) as executor:
             # submit jobs
             jobs = executor.imap_unordered(
