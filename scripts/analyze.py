@@ -1,5 +1,6 @@
 import os
 import json
+import zipfile
 import argparse
 import functools
 from hashlib import sha3_256
@@ -211,6 +212,7 @@ def process_single(s: str) -> list[str]:
             "hash": img_hash,
             "extension": img_ext,
             "size_bytes": img_size,
+            "bytes": response.content,
             # image data
             "width": w,
             "height": h,
@@ -242,10 +244,14 @@ def process_single(s: str) -> list[str]:
 
 
 def main(args):
+    # create output directory
+    archive_dir = os.path.join(args.output_dir, "archives")
+    os.makedirs(archive_dir, exist_ok=True)
+
     # open input and output file
     with (
         open(args.input_file, "r") as infile,
-        open(args.output_file, "a+") as outfile,
+        open(os.path.join(args.output_dir, "tps-analysis.jsonl"), "a+") as outfile,
     ):
         # create worker pool
         with Pool(
@@ -256,15 +262,42 @@ def main(args):
                 process_single, infile, chunksize=args.chunk_size
             )
 
+            file_count = 0
+            archive_count = 1
+
             # save results
-            for result in (pbar := tqdm(jobs, total=args.total)):
-                if result is None:
-                    continue
-                
+            for result in (pbar := tqdm(jobs, total=args.total, mininterval=1)):
+
+                # max number of files reached
+                if file_count == args.files_chunks:
+                    # close archive
+                    archive_file.close()
+
+                    # TODO: start upload
+
+                    # update states
+                    file_count = 0
+                    archive_count += 1
+                    pbar.set_description(f"Current archive: {archive_count}")
+
+                # create new archive
+                if file_count == 0:
+                    archive_filename = os.path.join(archive_dir, f"./kpu2024-part_{archive_count}.zip")
+                    archive_file = zipfile.ZipFile(archive_filename, "w", compression=zipfile.ZIP_DEFLATED)
+
+                # write to ZIP
+                # if this file has an error, skip
+                if result["success"]:
+                    file_name = sha3_256(result["url"].encode("utf8")).hexdigest()
+                    file_name += "." + result["url"].split("/")[-1].split(".")[1]
+                    archive_file.writestr(file_name, result["bytes"])
+
+                    file_count += 1
+                    del result["bytes"]
+
+                # write output to JSON
                 json.dump(result, outfile)
                 outfile.write("\n")
-
-                pbar.set_description(f"Processing {result['id']}")
 
 
 if __name__ == "__main__":
@@ -272,9 +305,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--template_file", type=str, required=True)
     parser.add_argument("--input_file", type=str, required=True)
-    parser.add_argument("--output_file", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--jobs", type=int, default=cpu_count())
-    parser.add_argument("--chunk_size", type=int, default=4)
+    parser.add_argument("--chunk_size", type=int, default=1)
+    parser.add_argument("--files_chunks", type=int, default=5000)
     parser.add_argument("--total", type=int, default=1999658)
 
     # parse CLI
